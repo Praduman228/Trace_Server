@@ -1,6 +1,9 @@
 import User from "../../models/userSchema.js";
 import UserOtp from "../../models/user-otp.js";
 import jwt from "jsonwebtoken";
+import { OAuth2Client } from "google-auth-library";
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
@@ -100,5 +103,46 @@ export const loginUser = async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+};
+
+export const googleLogin = async (req, res) => {
+    try {
+        const { credential } = req.body;
+        if (!credential) {
+            return res.status(400).json({ error: "Google credential is required" });
+        }
+        const ticket = await client.verifyIdToken({
+            idToken: credential,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const { email, name, sub: googleId } = payload;
+        
+        let user = await User.findOne({ email });
+        
+        if (user) {
+            if (!user.googleId) {
+                user.googleId = googleId;
+                await user.save();
+            }
+        } else {
+            user = await User.create({ name, email, googleId });
+        }
+        
+        const token = generateToken(user._id);
+        res.status(200).json({
+            success: true,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || ""
+            },
+            token
+        });
+    } catch (error) {
+        console.error("Google Login Error:", error);
+        res.status(500).json({ error: "Failed to authenticate with Google" });
     }
 };
